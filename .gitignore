@@ -1,0 +1,22 @@
+# Temenos runtime
+*.pid
+WallpaperCache/
+
+# User-specific workspace content
+Common/
+Area*/
+
+# Local wallpapers
+Wallpapers/
+
+# Temporary / backup files
+*.tmp
+*.bak
+*.log
+
+# PowerShell / Windows
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
