@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "paths": {
+    "common": "Common",
+    "wallpapers": "Wallpapers",
+    "wallpaperCache": "WallpaperCache"
+  },
+  "workspaces": {
+    "1": {
+      "name": "",
+      "folder": "Area1",
+      "wallpaper": "Area1.jpg"
+    },
+    "2": {
+      "name": "",
+      "folder": "Area2",
+      "wallpaper": "Area2.jpg"
+    },
+    "3": {
+      "name": "",
+      "folder": "Area3",
+      "wallpaper": "Area3.jpg"
+    },
+    "4": {
+      "name": "",
+      "folder": "Area4",
+      "wallpaper": "Area4.jpg"
+    },
+    "5": {
+      "name": "",
+      "folder": "Area5",
+      "wallpaper": "Area5.jpg"
+    }
+  }
+}

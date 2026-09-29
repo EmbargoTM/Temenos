@@ -2,27 +2,42 @@
 # TEMENOS
 # Utilitário de Áreas de Trabalho Virtuais para Windows 10
 #
-# Estrutura autocontida:
-#   Temenos\
-#       Temenos.ps1
-#       Common\
-#       Area1 - Nome\
-#       Area2 - Nome\
-#       Wallpapers\
-#       WallpaperCache\
-#
-# O script usa a pasta onde ele próprio está instalado ($PSScriptRoot).
+# Código em src\; os dados de execução ficam em Documents\Temenos\runtime\
+# (ou no caminho fornecido pelo launcher via -RuntimeRoot).
 # ============================================================
+
+param([string]$RuntimeRoot)
 
 $ErrorActionPreference = "SilentlyContinue"
 
-$Root        = $PSScriptRoot
-$Common      = Join-Path $Root "Common"
-$Wallpapers  = Join-Path $Root "Wallpapers"
-$Cache       = Join-Path $Root "WallpaperCache"
+$CodeRoot    = $PSScriptRoot
+. (Join-Path $CodeRoot "Config.ps1")
+. (Join-Path $CodeRoot "DesktopEvents.ps1")
+$ConfigPath = Join-Path (Split-Path -Parent $CodeRoot) "Temenos.json"
+
+try {
+    $Config = Import-TemenosConfig -Path $ConfigPath
+} catch {
+    Write-Error $_.Exception.Message -ErrorAction Continue
+    exit 1
+}
+
+if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
+    $documents = [Environment]::GetFolderPath("MyDocuments")
+    $RuntimeRoot = Join-Path $documents "Temenos\runtime"
+}
+
+$Root        = $RuntimeRoot
+$Common      = Join-Path $Root $Config.Paths.Common
+$Wallpapers  = Join-Path $Root $Config.Paths.Wallpapers
+$Cache       = Join-Path $Root $Config.Paths.WallpaperCache
 $PidFile     = Join-Path $Root "Temenos.pid"
 
-New-Item -ItemType Directory -Force -Path $Root, $Common, $Wallpapers, $Cache | Out-Null
+. (Join-Path $CodeRoot "Indicator.ps1")
+
+$workspaceFolders = @($Config.Workspaces.Values | ForEach-Object { Join-Path $Root $_.Folder })
+$runtimeFolders = @($Root, $Common, $Wallpapers, $Cache) + $workspaceFolders
+New-Item -ItemType Directory -Force -Path $runtimeFolders | Out-Null
 
 # ------------------------------------------------------------
 # Impede duas instâncias do Temenos
@@ -38,8 +53,10 @@ try {
         $oldProc = Get-Process -Id ([int]$oldPid) -ErrorAction SilentlyContinue
 
         if ($oldProc -and $oldProc.Id -ne $PID) {
-            try { Stop-Process -Id $oldProc.Id -Force -ErrorAction SilentlyContinue } catch {}
-            Start-Sleep -Milliseconds 250
+            try {
+                Stop-Process -Id $oldProc.Id -Force -ErrorAction SilentlyContinue
+                Wait-Process -Id $oldProc.Id -Timeout 2 -ErrorAction SilentlyContinue
+            } catch {}
         }
     }
 
@@ -70,17 +87,17 @@ public static class TemenosWallpaperApi
 function Find-Wallpaper {
     param([int]$DesktopIndex)
 
-    foreach ($ext in @(".jpg", ".jpeg", ".png", ".bmp")) {
-        $candidate = Join-Path $Wallpapers ("Area{0}{1}" -f $DesktopIndex, $ext)
+    $workspace = Get-TemenosWorkspace -WorkspaceIndex $DesktopIndex
+    if ($null -eq $workspace -or [string]::IsNullOrWhiteSpace($workspace.Wallpaper)) {
+        return $null
+    }
 
-        if (Test-Path -LiteralPath $candidate) {
-            try {
-                $item = Get-Item -LiteralPath $candidate -ErrorAction Stop
-                if ($item.Length -gt 0) {
-                    return $item.FullName
-                }
-            } catch {}
-        }
+    $candidate = Join-Path $Wallpapers $workspace.Wallpaper
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        try {
+            $item = Get-Item -LiteralPath $candidate -ErrorAction Stop
+            if ($item.Length -gt 0) { return $item.FullName }
+        } catch {}
     }
 
     return $null
@@ -264,7 +281,7 @@ function Get-CurrentDesktopIndex {
     $all = Get-AllDesktopIds
 
     if ($null -eq $current -or $null -eq $all -or $all.Length -lt 16) {
-        return 1
+        return $null
     }
 
     $count = [int]($all.Length / 16)
@@ -278,7 +295,7 @@ function Get-CurrentDesktopIndex {
         }
     }
 
-    return 1
+    return $null
 }
 
 function Get-DesktopCount {
@@ -292,33 +309,22 @@ function Get-DesktopCount {
 }
 
 # ------------------------------------------------------------
-# Pastas de área com label:
-#   Area1
-#   Area1 - Trabalho
-#   Area1_Trabalho
+# Workspace metadata comes from Temenos.json.
 # ------------------------------------------------------------
 function Get-AreaFolder {
     param([int]$DesktopIndex)
 
-    $exact = Join-Path $Root ("Area{0}" -f $DesktopIndex)
+    $workspace = Get-TemenosWorkspace -WorkspaceIndex $DesktopIndex
+    if ($null -eq $workspace) { return $null }
+    return Join-Path $Root $workspace.Folder
+}
 
-    if (Test-Path -LiteralPath $exact -PathType Container) {
-        return $exact
-    }
+function Get-AreaDisplayName {
+    param([int]$DesktopIndex)
 
-    $pattern = "^Area{0}(?:\s*[-_]\s*.+)?$" -f $DesktopIndex
-
-    $match = Get-ChildItem -Path $Root -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match $pattern } |
-        Sort-Object Name |
-        Select-Object -First 1
-
-    if ($match) {
-        return $match.FullName
-    }
-
-    New-Item -ItemType Directory -Force -Path $exact | Out-Null
-    return $exact
+    $workspace = Get-TemenosWorkspace -WorkspaceIndex $DesktopIndex
+    if ($null -eq $workspace) { return "" }
+    return $workspace.Name
 }
 
 # ------------------------------------------------------------
@@ -333,13 +339,14 @@ function Get-ManagedShortcutNames {
             ForEach-Object { $names[$_.Name] = $true }
     }
 
-    Get-ChildItem -Path $Root -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^Area\d+(?:\s*[-_]\s*.+)?$' } |
-        ForEach-Object {
-            Get-ChildItem -Path $_.FullName -File -ErrorAction SilentlyContinue |
+    foreach ($workspace in $Config.Workspaces.Values) {
+        $folder = Join-Path $Root $workspace.Folder
+        if (Test-Path -LiteralPath $folder -PathType Container) {
+            Get-ChildItem -Path $folder -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.Extension -in ".lnk", ".url" } |
                 ForEach-Object { $names[$_.Name] = $true }
         }
+    }
 
     return @($names.Keys)
 }
@@ -386,7 +393,7 @@ function Set-DesktopState {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $area = Get-AreaFolder -DesktopIndex $DesktopIndex
 
-    New-Item -ItemType Directory -Force -Path $area | Out-Null
+    if ($area) { New-Item -ItemType Directory -Force -Path $area | Out-Null }
 
     $managed = @(Get-ManagedShortcutNames)
 
@@ -408,7 +415,7 @@ function Set-DesktopState {
             }
     }
 
-    if (Test-Path $area) {
+    if ($area -and (Test-Path -LiteralPath $area -PathType Container)) {
         Get-ChildItem -Path $area -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Extension -in ".lnk", ".url" } |
             ForEach-Object {
@@ -432,7 +439,7 @@ if ($args -contains "-Test") {
     Write-Host "Temenos"
     Write-Host "Área atual: $i"
     Write-Host "Total de áreas: $n"
-    Write-Host "Instalação: $Root"
+    Write-Host "Runtime: $Root"
 
     $source = Find-Wallpaper -DesktopIndex $i
 
@@ -446,26 +453,33 @@ if ($args -contains "-Test") {
 }
 
 # ------------------------------------------------------------
-# Inicialização + monitoramento
+# Inicialização + notificações de mudança
 # ------------------------------------------------------------
 $last = 0
+try {
+    $desktopWatcher = New-Object TemenosDesktopChangeWatcher -ErrorAction Stop
+} catch {
+    Write-Error $_.Exception.Message -ErrorAction Continue
+    exit 1
+}
 
 $current = Get-CurrentDesktopIndex
-Set-DesktopState -DesktopIndex $current
+while ($null -eq $current) {
+    [void]$desktopWatcher.WaitForChange(-1)
+    $current = Get-CurrentDesktopIndex
+}
+
+Show-WorkspaceIndicator -WorkspaceIndex $current -WorkspaceName (Get-AreaDisplayName -DesktopIndex $current)
 $last = $current
+Set-DesktopState -DesktopIndex $current
 
 while ($true) {
+    [void]$desktopWatcher.WaitForChange(-1)
     $current = Get-CurrentDesktopIndex
 
-    if ($current -ne $last) {
-        Start-Sleep -Milliseconds 150
-        $confirmed = Get-CurrentDesktopIndex
-
-        if ($confirmed -ne $last) {
-            Set-DesktopState -DesktopIndex $confirmed
-            $last = $confirmed
-        }
+    if ($null -ne $current -and $current -ne $last) {
+        $last = $current
+        Show-WorkspaceIndicator -WorkspaceIndex $current -WorkspaceName (Get-AreaDisplayName -DesktopIndex $current)
+        Set-DesktopState -DesktopIndex $current
     }
-
-    Start-Sleep -Milliseconds 150
 }
