@@ -1,35 +1,75 @@
 {
-  "version": 1,
+  "appearance": {
+    "theme": "milk",
+    "variant": "dark"
+  },
+  "bar": {
+    "apps": [
+
+    ],
+    "center": [
+      "workspaces",
+      "new_area"
+    ],
+    "enabled": true,
+    "end": [
+      "layout",
+      "tray",
+      "quick_settings",
+      "date",
+      "clock",
+      "show_desktop"
+    ],
+    "height": 48,
+    "position": "bottom",
+    "start": [
+      "launcher",
+      "apps"
+    ],
+    "style": "full"
+  },
   "paths": {
     "common": "Common",
-    "wallpapers": "Wallpapers",
-    "wallpaperCache": "WallpaperCache"
+    "wallpaperCache": "WallpaperCache",
+    "wallpapers": "Wallpapers"
+  },
+  "version": 1,
+  "windows": {
+    "areaKeys": "win+number",
+    "hideTaskbar": true,
+    "indicator": {
+      "enabled": false
+    }
+  },
+  "wm": {
+    "enabled": true,
+    "modKey": "super"
   },
   "workspaces": {
     "1": {
-      "name": "",
       "folder": "Area1",
-      "wallpaper": "Area1.jpg"
+      "name": "",
+      "wallpaper": "Area1.png"
     },
     "2": {
-      "name": "",
       "folder": "Area2",
-      "wallpaper": "Area2.jpg"
+      "name": "",
+      "wallpaper": "Area2.png"
     },
     "3": {
-      "name": "",
       "folder": "Area3",
-      "wallpaper": "Area3.jpg"
+      "name": "",
+      "wallpaper": "Area3.png"
     },
     "4": {
-      "name": "",
       "folder": "Area4",
-      "wallpaper": "Area4.jpg"
+      "name": "",
+      "wallpaper": "Area4.png"
     },
     "5": {
-      "name": "",
       "folder": "Area5",
-      "wallpaper": "Area5.jpg"
+      "name": "",
+      "wallpaper": "Area5.png"
     }
   }
 }
