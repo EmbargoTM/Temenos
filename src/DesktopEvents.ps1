@@ -14,6 +14,7 @@ public sealed class TemenosDesktopChangeWatcher : IDisposable
     private const uint NotifyLastSet = 0x00000004;
     private readonly List<RegistryKey> keys = new List<RegistryKey>();
     private readonly List<EventWaitHandle> changedEvents = new List<EventWaitHandle>();
+    private readonly List<int> sourceKinds = new List<int>();
     private bool disposed;
 
     [DllImport("advapi32.dll", SetLastError = true)]
@@ -35,48 +36,48 @@ public sealed class TemenosDesktopChangeWatcher : IDisposable
 
         using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default))
         {
-            foreach (string path in paths)
+            for (int i = 0; i < paths.Length; i++)
             {
-                RegistryKey key = root.OpenSubKey(path, false);
+                RegistryKey key = root.OpenSubKey(paths[i], false);
                 if (key != null)
                 {
                     keys.Add(key);
                     changedEvents.Add(new EventWaitHandle(false, EventResetMode.ManualReset));
+                    sourceKinds.Add(i);
                 }
             }
+
+            if (keys.Count == 0)
+                throw new InvalidOperationException("Windows virtual desktop registry keys are unavailable.");
+
+            for (int i = 0; i < keys.Count; i++) Arm(i);
         }
-
-        if (keys.Count == 0)
-            throw new InvalidOperationException("Windows virtual desktop registry keys are unavailable.");
-
-        Arm();
     }
 
-    public bool WaitForChange(int timeoutMilliseconds)
+    public int WaitForChange(int timeoutMilliseconds)
     {
         if (disposed) throw new ObjectDisposedException("TemenosDesktopChangeWatcher");
-        if (WaitHandle.WaitAny(changedEvents.ToArray(), timeoutMilliseconds) == WaitHandle.WaitTimeout) return false;
+        int signaledIndex = WaitHandle.WaitAny(changedEvents.ToArray(), timeoutMilliseconds);
+        if (signaledIndex == WaitHandle.WaitTimeout) return -1;
 
-        // Re-arm before the caller reads state, so further changes are queued
-        // while Temenos applies shortcuts and wallpaper.
-        Arm();
-        return true;
+        // Preserve other already-signaled keys; the caller reads this source
+        // first, then consumes any additional pending signal on the next wait.
+        int source = sourceKinds[signaledIndex];
+        Arm(signaledIndex);
+        return source;
     }
 
-    private void Arm()
+    private void Arm(int index)
     {
-        foreach (EventWaitHandle changeEvent in changedEvents) changeEvent.Reset();
-        for (int i = 0; i < keys.Count; i++)
-        {
-            int result = RegNotifyChangeKeyValue(
-                keys[i].Handle.DangerousGetHandle(),
-                false,
-                NotifyLastSet,
-                changedEvents[i].SafeWaitHandle.DangerousGetHandle(),
-                true
-            );
-            if (result != 0) throw new Win32Exception(result, "Could not watch virtual desktop changes.");
-        }
+        changedEvents[index].Reset();
+        int result = RegNotifyChangeKeyValue(
+            keys[index].Handle.DangerousGetHandle(),
+            false,
+            NotifyLastSet,
+            changedEvents[index].SafeWaitHandle.DangerousGetHandle(),
+            true
+        );
+        if (result != 0) throw new Win32Exception(result, "Could not watch virtual desktop changes.");
     }
 
     public void Dispose()

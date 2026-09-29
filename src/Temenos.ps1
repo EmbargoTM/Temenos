@@ -189,42 +189,31 @@ function Get-RegBinary {
 }
 
 function Get-CurrentDesktopBytes {
+    param([int]$PreferredSource = 0)
+
     $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
         [Microsoft.Win32.RegistryHive]::CurrentUser,
         [Microsoft.Win32.RegistryView]::Default
     )
 
     try {
-        $global = $base.OpenSubKey(
-            "Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops",
-            $false
-        )
-
-        try {
-            $v = Get-RegBinary $global "CurrentVirtualDesktop"
-
-            if ($null -ne $v -and $v.Length -eq 16) {
-                return $v
-            }
-        } finally {
-            if ($global) { $global.Dispose() }
+        $sid = try { (Get-Process -Id $PID).SessionId } catch { 1 }
+        $globalPath = "Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"
+        $sessionPath = "Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo\$sid\VirtualDesktops"
+        if ($PreferredSource -eq 1) {
+            $paths = @($sessionPath, $globalPath)
+        } else {
+            $paths = @($globalPath, $sessionPath)
         }
 
-        $sid = try { (Get-Process -Id $PID).SessionId } catch { 1 }
-
-        $session = $base.OpenSubKey(
-            "Software\Microsoft\Windows\CurrentVersion\Explorer\SessionInfo\$sid\VirtualDesktops",
-            $false
-        )
-
-        try {
-            $v = Get-RegBinary $session "CurrentVirtualDesktop"
-
-            if ($null -ne $v -and $v.Length -eq 16) {
-                return $v
+        foreach ($path in $paths) {
+            $key = $base.OpenSubKey($path, $false)
+            try {
+                $v = Get-RegBinary $key "CurrentVirtualDesktop"
+                if ($null -ne $v -and $v.Length -eq 16) { return $v }
+            } finally {
+                if ($key) { $key.Dispose() }
             }
-        } finally {
-            if ($session) { $session.Dispose() }
         }
     } finally {
         if ($base) { $base.Dispose() }
@@ -277,7 +266,9 @@ function Test-BytesEqual {
 }
 
 function Get-CurrentDesktopIndex {
-    $current = Get-CurrentDesktopBytes
+    param([int]$PreferredSource = 0)
+
+    $current = Get-CurrentDesktopBytes -PreferredSource $PreferredSource
     $all = Get-AllDesktopIds
 
     if ($null -eq $current -or $null -eq $all -or $all.Length -lt 16) {
@@ -465,8 +456,8 @@ try {
 
 $current = Get-CurrentDesktopIndex
 while ($null -eq $current) {
-    [void]$desktopWatcher.WaitForChange(-1)
-    $current = Get-CurrentDesktopIndex
+    $source = $desktopWatcher.WaitForChange(-1)
+    $current = Get-CurrentDesktopIndex -PreferredSource $source
 }
 
 Show-WorkspaceIndicator -WorkspaceIndex $current -WorkspaceName (Get-AreaDisplayName -DesktopIndex $current)
@@ -474,8 +465,8 @@ $last = $current
 Set-DesktopState -DesktopIndex $current
 
 while ($true) {
-    [void]$desktopWatcher.WaitForChange(-1)
-    $current = Get-CurrentDesktopIndex
+    $source = $desktopWatcher.WaitForChange(-1)
+    $current = Get-CurrentDesktopIndex -PreferredSource $source
 
     if ($null -ne $current -and $current -ne $last) {
         $last = $current
