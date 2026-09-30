@@ -29,6 +29,7 @@ runtime_root:  string
 main_hwnd:     win.HWND
 desk:          struct { index, count: int, id: [16]byte } // the active area (1-based, 0 = unknown)
 switch_target: int
+wallpaper_rotation: map[int]int
 
 default_context :: proc "contextless" () -> runtime.Context { return runtime.default_context() }
 
@@ -46,6 +47,7 @@ main :: proc() {
 	cfg, err = load_config(config_path)
 	if err != "" { fatal(err) }
 	runtime_root = strings.clone(known_folder(win.FOLDERID_Documents))
+	wallpaper_rotation = make(map[int]int, 16, context.allocator)
 	runtime_root, _ = filepath.join({runtime_root, "Temenos", "runtime"})
 	if i, found := slice.linear_search(args, "--runtime"); found && i + 1 < len(args) { runtime_root = args[i + 1] }
 	if !ensure_runtime_dirs() { fatal(fmt.tprintf("Could not create the runtime folder %s", runtime_root)) }
@@ -55,6 +57,7 @@ main :: proc() {
 	if slice.contains(args, "--setup") || slice.contains(args, "--apps") || !os.exists(runtime_path(SETUP_MARKER)) {
 		if setup_run(apps_only = slice.contains(args, "--apps") && os.exists(runtime_path(SETUP_MARKER))) {
 			if cfg, err = load_config(config_path); err != "" { fatal(err) }
+			if !ensure_runtime_dirs() { fatal(fmt.tprintf("Could not create the runtime folder %s", runtime_root)) }
 			theme = resolve_theme()
 		}
 	}
@@ -151,8 +154,12 @@ run :: proc() {
 			index, count, id := read_desktops(watcher.source[i])
 			if index > 0 && (index != desk.index || count != desk.count) {
 				changed := index != desk.index
+				count_changed := count != desk.count
 				desk.index, desk.count, desk.id = index, count, id
-				if changed { area_changed() } else { bar_render() }
+				if changed { area_changed() } else {
+					bar_render()
+					if count_changed { area_request(desk.index) }
+				}
 			}
 		}
 		msg: win.MSG
@@ -174,6 +181,21 @@ area_changed :: proc() {
 	if cfg.windows.indicator.enabled { indicator_show(desk.index, desk.count, area_name(desk.index, desk.id)) }
 	bar_render()
 	area_request(desk.index)
+	win.KillTimer(main_hwnd, TIMER_WALLPAPER)
+	if len(wallpaper_names(desk.index)) > 1 {
+		minutes := 0
+		if ws, ok := cfg.workspaces[desk.index]; ok { minutes = ws.wallpaper_interval_minutes }
+		if minutes <= 0 { minutes = 30 }
+		win.SetTimer(main_hwnd, TIMER_WALLPAPER, win.UINT(minutes * 60 * 1000), nil)
+	}
+}
+
+@(private = "file")
+wallpaper_advance :: proc() {
+	items := wallpaper_names(desk.index)
+	if len(items) < 2 { win.KillTimer(main_hwnd, TIMER_WALLPAPER); return }
+	wallpaper_rotation[desk.index] = (wallpaper_rotation[desk.index] + 1) % len(items)
+	wallpaper_request(desk.index)
 }
 
 EVENT_SYSTEM_FOREGROUND    :: 0x0003
@@ -224,6 +246,7 @@ main_proc :: proc "system" (hwnd: win.HWND, msg: win.UINT, wp: win.WPARAM, lp: w
 		switch wp {
 		case TIMER_SWITCH:  switch_when_released()
 		case TIMER_ARRANGE: tiler_arrange()
+		case TIMER_WALLPAPER: wallpaper_advance()
 		}
 	case WM_APP_SWITCH:
 		request_switch(int(wp))

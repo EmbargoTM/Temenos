@@ -184,6 +184,7 @@ send_chord :: proc(mods: []win.WORD, keys: []win.WORD) {
 new_desktop :: proc() { send_chord({win.VK_LCONTROL, win.VK_LWIN}, {'D'}) }
 
 TIMER_SWITCH  :: 2
+TIMER_WALLPAPER :: 4
 WM_APP_SWITCH :: win.WM_APP + 2 // wParam: area; posted by the keyboard hook
 
 // Switch to area `target`: directly when possible, otherwise with the

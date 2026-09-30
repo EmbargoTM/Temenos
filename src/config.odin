@@ -12,8 +12,10 @@ import win "core:sys/windows"
 
 Workspace :: struct {
 	name:      string,
-	folder:    string,
-	wallpaper: string, // "" or null: keep the current wallpaper
+	folder:    string, // empty: no associated shortcuts folder
+	wallpaper: string, // legacy single wallpaper; used when wallpapers is empty
+	wallpapers: []string,
+	wallpaper_interval_minutes: int `json:"wallpaperIntervalMinutes"`, // 0 = default (30)
 }
 
 // A window whose class (exact) and title (substring) match is never tiled.
@@ -145,11 +147,19 @@ validate :: proc(c: ^Config) -> string {
 	if len(c.workspaces) == 0 { return "Temenos.json must define at least one workspace." }
 	for index, ws in c.workspaces {
 		if index < 1 { return fmt.aprintf("Invalid workspace id '%d' in Temenos.json. Use positive numbers.", index) }
-		if is_unsafe_relative(ws.folder) { return fmt.aprintf("Invalid relative path in Temenos.json: workspaces.%d.folder", index) }
-		if seen[ws.folder] { return fmt.aprintf("Workspace folders must be unique and differ from the shared paths: %s", ws.folder) }
-		seen[ws.folder] = true
+		if ws.folder != "" && is_unsafe_relative(ws.folder) { return fmt.aprintf("Invalid relative path in Temenos.json: workspaces.%d.folder", index) }
+		if ws.folder != "" && seen[ws.folder] { return fmt.aprintf("Workspace folders must be unique and differ from the shared paths: %s", ws.folder) }
+		if ws.folder != "" { seen[ws.folder] = true }
 		if strings.trim_space(ws.wallpaper) != "" && is_unsafe_relative(ws.wallpaper) {
 			return fmt.aprintf("Invalid relative path in Temenos.json: workspaces.%d.wallpaper", index)
+		}
+		for name in ws.wallpapers {
+			if strings.trim_space(name) == "" || is_unsafe_relative(name) {
+				return fmt.aprintf("Invalid relative path in Temenos.json: workspaces.%d.wallpapers", index)
+			}
+		}
+		if ws.wallpaper_interval_minutes < 0 || ws.wallpaper_interval_minutes > 10080 {
+			return fmt.aprintf("workspaces.%d.wallpaperIntervalMinutes must be between 0 and 10080.", index)
 		}
 	}
 

@@ -111,7 +111,7 @@ Wizard :: struct {
 	icons:           map[string]Icon,
 	// Areas page.
 	areas:           []int,          // configured areas, sorted
-	picked:          map[int]string, // area -> chosen image (absolute)
+	picked:          map[int][]string, // area -> chosen images (absolute)
 	thumbs:          map[int]Icon,
 	thumbs_loaded:   bool,
 }
@@ -142,6 +142,10 @@ setup_run :: proc(apps_only := false) -> bool {
 	for kind in WIDGET_ORDER { if !slice.contains(wz.order[:], kind) { append(&wz.order, kind) } }
 	areas := make([dynamic]int)
 	for index in cfg.workspaces { append(&areas, index) }
+	_, desktop_count, _ := read_desktops(0)
+	for index in 1 ..< desktop_count + 1 {
+		if !slice.contains(areas[:], index) { append(&areas, index) }
+	}
 	slice.sort(areas[:])
 	wz.areas = areas[:]
 	if apps_only { wz.all_apps = list_apps() }
@@ -372,7 +376,7 @@ render :: proc() {
 		}
 		mock(420, 160, 300, 190, th, wz.milk_bar, wz.bar_top, wz.bar_floating, wz.tiling ? 2 : 1, false, wz.bar_height)
 	case .Areas:
-		title, subtitle = "Areas", "Click an area to choose its wallpaper."
+		title, subtitle = "Areas", "Click an area to choose its wallpapers."
 		wallpaper_grid()
 		choice(40, 362, "Show the area indicator when switching", {"Yes", "No"}, wz.indicator ? 0 : 1, .Indicator)
 	case .Done:
@@ -535,48 +539,81 @@ pick_wallpaper :: proc(area: int) {
 	buf: [1024]u16
 	filter := win.utf8_to_wstring("Images (*.jpg, *.png, *.bmp)\x00*.jpg;*.jpeg;*.png;*.bmp\x00", context.temp_allocator)
 	ofn := win.OPENFILENAMEW{lStructSize = size_of(win.OPENFILENAMEW), hwndOwner = wz.hwnd, lpstrFilter = filter, lpstrFile = cstring16(&buf[0]),
-	                         nMaxFile = len(buf), Flags = win.OFN_FILEMUSTEXIST | win.OFN_PATHMUSTEXIST | win.OFN_NOCHANGEDIR}
+	                         nMaxFile = len(buf), Flags = win.OFN_FILEMUSTEXIST | win.OFN_PATHMUSTEXIST | win.OFN_NOCHANGEDIR | win.OFN_EXPLORER | win.OFN_ALLOWMULTISELECT}
 	if !win.GetOpenFileNameW(&ofn) { return }
-	// Kept until Finish: not in the temporary allocator, which each message clears.
-	path, _ := win.wstring_to_utf8(cstring16(&buf[0]), -1, context.allocator)
-	if _, ok := load_thumb(path); !ok {
-		win.MessageBoxW(wz.hwnd, win.L("That file is not an image Temenos can read."), win.L("Temenos"), win.MB_OK | win.MB_ICONWARNING)
-		delete(path)
-		return
+	// Explorer returns either one full path, or a directory followed by file names.
+	parts := make([dynamic]string, context.temp_allocator)
+	start := 0
+	for i in 0 ..< len(buf) {
+		if buf[i] == 0 {
+			if i == start { break }
+			part, _ := win.wstring_to_utf8(cstring16(&buf[start]), i - start, context.temp_allocator)
+			append(&parts, part)
+			start = i + 1
+		}
 	}
-	if old, had := wz.picked[area]; had { delete(old) }
-	wz.picked[area] = path
-	set_thumb(area, path)
+	if len(parts) == 0 { return }
+	paths := make([dynamic]string, context.allocator)
+	if len(parts) == 1 {
+		append(&paths, strings.clone(parts[0]))
+	} else {
+		for file in parts[1:] {
+			path, _ := filepath.join({parts[0], file}, context.allocator)
+			append(&paths, path)
+		}
+	}
+	for path in paths {
+		if _, ok := load_thumb(path); !ok {
+			win.MessageBoxW(wz.hwnd, win.L("A selected file is not an image Temenos can read."), win.L("Temenos"), win.MB_OK | win.MB_ICONWARNING)
+			for p in paths { delete(p) }
+			delete(paths)
+			return
+		}
+	}
+	if old, had := wz.picked[area]; had { for path in old { delete(path) }; delete(old) }
+	wz.picked[area] = paths[:]
+	set_thumb(area, paths[0])
 }
 
-// Where each area's new wallpaper goes, as a name inside Wallpapers/. An
-// image already in that folder is used where it is. Others are copied under
-// "AreaN.ext", or "AreaN-2.ext"… when another area still uses that name, so
-// no copy ever overwrites an image some area shows.
+// Where each area's wallpapers go, as names inside Wallpapers/. Images already
+// there are used in place; external files are copied without overwriting files
+// another area may use.
 @(private = "file")
-place_wallpapers :: proc() -> (names: map[int]string, ok: bool) {
+place_wallpapers :: proc() -> (names: map[int][]string, ok: bool) {
 	folder := runtime_path(cfg.paths.wallpapers)
 	inside :: proc(src, folder: string) -> bool { return strings.equal_fold(filepath.dir(src), folder) }
-	names = make(map[int]string, 16, context.temp_allocator)
+	names = make(map[int][]string, 16, context.temp_allocator)
 	used := make(map[string]bool, 16, context.temp_allocator)
 	for area in wz.areas {
-		name := cfg.workspaces[area].wallpaper
-		if src, picked := wz.picked[area]; picked { name = inside(src, folder) ? filepath.base(src) : "" }
-		if name != "" { used[strings.to_lower(name, context.temp_allocator)] = true }
-	}
-	for area, src in wz.picked {
-		if inside(src, folder) { names[area] = filepath.base(src); continue }
-		ext := strings.to_lower(filepath.ext(src), context.temp_allocator)
-		name := fmt.tprintf("Area%d%s", area, ext)
-		for k := 2; used[strings.to_lower(name, context.temp_allocator)]; k += 1 { name = fmt.tprintf("Area%d-%d%s", area, k, ext) }
-		used[strings.to_lower(name, context.temp_allocator)] = true
-		dst := runtime_path(cfg.paths.wallpapers, name)
-		if !win.CopyFileW(win.utf8_to_wstring(src, context.temp_allocator), win.utf8_to_wstring(dst, context.temp_allocator), false) {
-			message := fmt.tprintf("Could not copy %s to %s (Windows error %d).", src, dst, win.GetLastError())
-			win.MessageBoxW(wz.hwnd, win.utf8_to_wstring(message, context.temp_allocator), win.L("Temenos"), win.MB_OK | win.MB_ICONERROR)
-			return names, false
+		ws := cfg.workspaces[area]
+		if len(ws.wallpapers) > 0 {
+			names[area] = ws.wallpapers
+		} else if ws.wallpaper != "" {
+			names[area] = []string{ws.wallpaper}
+		} else {
+			names[area] = wallpaper_names(area)
 		}
-		names[area] = name
+		for name in names[area] { used[strings.to_lower(name, context.temp_allocator)] = true }
+	}
+	for area, sources in wz.picked {
+		selected := make([dynamic]string, context.temp_allocator)
+		for source, i in sources {
+			ext := strings.to_lower(filepath.ext(source), context.temp_allocator)
+			stem := fmt.tprintf("Area%d-%d", area, i + 1)
+			name := inside(source, folder) ? filepath.base(source) : fmt.tprintf("%s%s", stem, ext)
+			if !inside(source, folder) {
+				for k := 2; used[strings.to_lower(name, context.temp_allocator)]; k += 1 { name = fmt.tprintf("%s-%d%s", stem, k, ext) }
+				dst := runtime_path(cfg.paths.wallpapers, name)
+				if !win.CopyFileW(win.utf8_to_wstring(source, context.temp_allocator), win.utf8_to_wstring(dst, context.temp_allocator), false) {
+					message := fmt.tprintf("Could not copy %s to %s (Windows error %d).", source, dst, win.GetLastError())
+					win.MessageBoxW(wz.hwnd, win.utf8_to_wstring(message, context.temp_allocator), win.L("Temenos"), win.MB_OK | win.MB_ICONERROR)
+					return names, false
+				}
+			}
+			used[strings.to_lower(name, context.temp_allocator)] = true
+			append(&selected, name)
+		}
+		names[area] = selected[:]
 	}
 	return names, true
 }
@@ -634,10 +671,15 @@ finish :: proc() -> bool {
 	set(&windows, "indicator", indicator)
 	set(&root, "windows", windows)
 	workspaces := child(root, "workspaces")
-	for area, name in names {
+	for area, area_names in names {
 		key := fmt.tprintf("%d", area)
 		entry := child(workspaces, key)
-		set(&entry, "wallpaper", name)
+		if _, exists := cfg.workspaces[area]; !exists {
+			set(&entry, "name", "")
+			set(&entry, "folder", workspace_folder(area))
+		}
+		set(&entry, "wallpaper", len(area_names) > 0 ? area_names[0] : "")
+		set(&entry, "wallpapers", strings_array(area_names))
 		set(&workspaces, key, entry)
 	}
 	set(&root, "workspaces", workspaces)

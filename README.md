@@ -10,14 +10,14 @@ Temenos is written in [Odin](https://odin-lang.org), like [milk](https://github.
 
 ## Features
 
-* **Per-area wallpapers and shortcuts.** Each area shows its own `.lnk`/`.url` shortcuts on the desktop, plus common ones shown everywhere, and its own wallpaper.
+* **Per-area wallpapers and shortcuts.** Each area shows its own `.lnk`/`.url` shortcuts on the desktop, plus common ones shown everywhere. An area can rotate through multiple wallpapers automatically.
 * **Navbar.** Start, your pinned apps, the area dots (click to switch, scroll to step through them), a button for a new area, the tiling layout, the notification-area icons, Wi‑Fi, volume and battery, the date ("Terça, 29 de Setembro"), the clock and the show-desktop corner. The volume icon follows the volume the moment it changes. You choose where each item goes and how tall the bar is. It registers as an AppBar, so maximized windows stay clear of it, and it steps aside for fullscreen apps.
 * **Replaces the taskbar, if you like.** The setup lets you keep the Windows taskbar instead. With the Temenos bar, the Windows taskbar is hidden while Temenos runs. The bar opens Windows' own notification center and calendar, quick settings and widgets, and shows the real taskbar briefly when you open the tray. Your taskbar settings come back when Temenos quits, and also on its next start if it crashed.
 * **Pinned apps.** Pick apps from everything in Start's "All apps" (Store apps included), with their real icons and a search, in the setup or from the bar's **Pinned apps…** menu item.
 * **Area indicator.** A pill with `AREA N · Name` and the area dots slides out from behind the bar and fades away. It can be turned off.
 * **Window tiling (optional).** milk's dwm layouts (master/stack, monocle, floating) for the windows of the current area, on each monitor. On Windows 11 the focused window's border takes the accent colour.
 * **Area keys.** Choose between Win+1…9 (jump to an area) and Ctrl+Alt+←/→ (previous/next area).
-* **Setup wizard.** Runs on the first start and from the bar's right-click menu. It sets the theme; the Temenos bar or the Windows taskbar; the bar's position, style, height and the place of each item; the pinned apps; the keys and tiling; a wallpaper for each area and the area indicator; and whether Temenos starts with Windows. Every choice restyles the wizard as you make it.
+* **Setup wizard.** Runs on the first start and from the bar's right-click menu. It sets the theme; the Temenos bar or the Windows taskbar; the bar's position, style, height and the place of each item; the pinned apps; the keys and tiling; wallpapers for every current area and the area indicator; and whether Temenos starts with Windows. Every choice restyles the wizard as you make it.
 * **Better Windows 11 support.** Crisp on scaled displays (per-monitor DPI), uses Segoe UI Variable and Fluent icons, follows the light/dark app mode, reads desktop names given in Task View, and jumps straight to an area with a single animation. Windows 10 falls back to Segoe UI, MDL2 icons and the Action Center.
 
 ## Requirements
@@ -67,7 +67,7 @@ Documents/Temenos/runtime/
   "paths": { "common": "Common", "wallpapers": "Wallpapers", "wallpaperCache": "WallpaperCache" },
   "workspaces": {
     "1": { "name": "Work", "folder": "Area1", "wallpaper": "Work.jpg" },
-    "2": { "name": "", "folder": "Area2", "wallpaper": null }
+    "2": { "name": "", "folder": "Area2", "wallpapers": ["Home.jpg", "Home-evening.png"], "wallpaperIntervalMinutes": 30 }
   },
   "appearance": { "theme": "milk", "variant": "auto", "animationScale": 1 },
   "bar": {
@@ -93,7 +93,7 @@ Documents/Temenos/runtime/
 }
 ```
 
-**Workspaces.** The numeric key is the Virtual Desktop's position in Task View. `name` is shown by the indicator; when it is empty, the name given in Windows 11 Task View is used, and otherwise just `AREA N`. `folder` holds the area's shortcuts. `wallpaper` names a JPG, PNG or BMP file in `Wallpapers/`, and `null` leaves the wallpaper unchanged. The setup uses an image already in `Wallpapers/` where it is and copies any other image there, never over an image another area still uses. Paths must be relative and stay inside the runtime folder. Before applying a wallpaper, Temenos decodes it and applies a copy from `WallpaperCache/`, so a file still being written or edited (in Krita, say) never breaks the desktop.
+**Workspaces.** The numeric key is the Virtual Desktop's position in Task View; it can be any positive number. `name` is shown by the indicator; when it is empty, the name given in Windows 11 Task View is used, and otherwise just `AREA N`. `folder` holds the area's shortcuts. A configured `folder` may have any relative name. For an unconfigured area N, Temenos prefers an existing folder named exactly `AreaN`; otherwise it uses a single existing runtime folder whose name contains `AreaN` (without confusing `Area1` with `Area10`). If no matching folder exists, Temenos creates `AreaN`; if multiple non-exact folders match, it leaves shortcuts unmanaged rather than choosing arbitrarily. `wallpaper` names one JPG, PNG or BMP in `Wallpapers/`; `wallpapers` can list several images and takes precedence when non-empty. Temenos rotates through that list every `wallpaperIntervalMinutes` minutes (default 30; use 0 for the default). Leave both fields empty or set `wallpaper` to `null` to keep the current wallpaper. The setup lets you multi-select images for an area. For an unconfigured new area N, files named `AreaN.ext`, `AreaN-1.ext`, `AreaN-2.ext`… in `Wallpapers/` are also discovered and rotated automatically. The setup copies external images into that folder without overwriting an image another area uses. Paths must be relative and stay inside the runtime folder. Before applying a wallpaper, Temenos decodes it and applies a copy from `WallpaperCache/`, so a file still being written or edited (in Krita, say) never breaks the desktop.
 
 **Appearance.** Themes are `milk`, `matcha` and `blueberry`. `variant` is `light`, `dark` or `auto`, which follows the Windows app mode. `animationScale` of 0 turns animations off.
 
@@ -131,7 +131,7 @@ Documents/Temenos/runtime/
 
 Windows reserves most Win+letter shortcuts, so `alt` is the default.
 
-**Windows.** `areaKeys` is `win+number` (Win+1…9 jumps to an area, taking those keys from the taskbar) or `ctrl+alt+arrow` (previous/next area). `hideTaskbar` hides the Windows taskbar while the bar is enabled. The indicator's `position` is `top`, `bottom` or `center`; an empty value uses the bar's edge.
+**Windows.** Temenos reads up to 256 virtual desktops from Windows. `areaKeys` is `win+number` (Win+1…9 jumps to an area, taking those keys from the taskbar) or `ctrl+alt+arrow` (previous/next area, including areas beyond 9). `hideTaskbar` hides the Windows taskbar while the bar is enabled. The indicator's `position` is `top`, `bottom` or `center`; an empty value uses the bar's edge.
 
 ## How it works
 
